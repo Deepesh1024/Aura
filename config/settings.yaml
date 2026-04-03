@@ -1,0 +1,75 @@
+# Aura System Configuration
+# Override any value via environment variables prefixed with AURA_
+
+app:
+  name: "Aura"
+  version: "0.1.0"
+  debug: false
+  log_level: "INFO"
+
+llm:
+  provider: "openai"            # openai | anthropic | mock
+  model: "gpt-4o"
+  temperature: 0.1
+  max_tokens: 4096
+  timeout_seconds: 30
+  mock_mode: true               # Use mock LLM for local dev
+
+vector_db:
+  provider: "milvus"
+  host: "localhost"
+  port: 19530
+  collection_name: "aura_embeddings"
+  embedding_dim: 384
+  metric_type: "COSINE"
+
+redis:
+  url: "redis://localhost:6379/0"
+  max_connections: 20
+  message_bus_stream: "aura:bus"
+  memory_prefix: "aura:mem:"
+
+mpp_simulator:
+  engine: "sqlite"              # SQLite-backed MPP simulation
+  db_path: ":memory:"
+  synthetic_rows: 100000
+  latency_injection_ms: 0       # Set > 0 to simulate bottlenecks
+  partitions: 8
+
+ray:
+  enabled: false                # Enable for distributed execution
+  address: "auto"
+  num_cpus: 4
+  dashboard_port: 8265
+
+inference:
+  max_latency_ms: 200
+  cache_enabled: true
+  cache_max_size: 10000
+  quantization: "none"          # none | int8 | fp16
+
+telemetry:
+  enabled: true
+  prometheus_port: 9090
+  trace_export: "console"       # console | otlp
+
+rbac:
+  enabled: true
+  default_role: "viewer"
+
+agents:
+  planner:
+    max_react_iterations: 10
+    tools:
+      - "execute_sql"
+      - "search_schema"
+      - "describe_table"
+      - "analyze_query_plan"
+      - "verify_output"
+      - "trigger_action"
+  data_architect:
+    max_sql_retries: 3
+    schema_search_top_k: 5
+  verifier:
+    strict_mode: true
+    max_constraint_depth: 5
