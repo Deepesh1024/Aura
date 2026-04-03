@@ -1,0 +1,64 @@
+# Role-Based Access Control Policies
+# Defines permissions for each role across data and agent operations
+
+roles:
+  admin:
+    description: "Full system access"
+    permissions:
+      data:
+        - "read:*"
+        - "write:*"
+        - "delete:*"
+      agents:
+        - "invoke:*"
+        - "configure:*"
+      actions:
+        - "execute:*"
+        - "rollback:*"
+    row_filter: null
+    column_mask: []
+
+  analyst:
+    description: "Read access with analysis capabilities"
+    permissions:
+      data:
+        - "read:*"
+      agents:
+        - "invoke:data_architect"
+        - "invoke:planner"
+        - "invoke:verifier"
+      actions:
+        - "execute:safe_actions"
+    row_filter: null
+    column_mask:
+      - "ssn"
+      - "credit_card"
+      - "salary"
+
+  viewer:
+    description: "Read-only access to aggregated data"
+    permissions:
+      data:
+        - "read:aggregated"
+      agents:
+        - "invoke:planner"
+      actions: []
+    row_filter: "is_public = 1"
+    column_mask:
+      - "ssn"
+      - "credit_card"
+      - "salary"
+      - "email"
+      - "phone"
+      - "address"
+
+# Data classification levels
+data_classifications:
+  public:
+    roles: ["admin", "analyst", "viewer"]
+  internal:
+    roles: ["admin", "analyst"]
+  confidential:
+    roles: ["admin"]
+  restricted:
+    roles: ["admin"]
