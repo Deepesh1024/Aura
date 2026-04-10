@@ -26,7 +26,13 @@ from pydantic import BaseModel, Field
 from aura.core.bus import AsyncAgentBus, Envelope, Priority
 from aura.core.config import get_settings
 from aura.core.memory import MemoryStore
-from aura.core.telemetry import get_prometheus_metrics
+from aura.core.telemetry import (
+    ACTIVE_AGENTS,
+    INFERENCE_LATENCY,
+    REQUEST_TOTAL,
+    get_prometheus_metrics,
+    record_memory_utilization,
+)
 from aura.agents.data_architect import DataArchitectAgent
 from aura.agents.planner import PlannerAgent
 from aura.agents.verifier import VerifierAgent
@@ -49,6 +55,16 @@ state: dict[str, Any] = {}
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
+
+async def _memory_sampler(interval_seconds: float = 5.0) -> None:
+    """Background task that periodically samples memory utilization."""
+    while True:
+        try:
+            record_memory_utilization()
+        except Exception:
+            logger.debug("Memory sampling failed", exc_info=True)
+        await asyncio.sleep(interval_seconds)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -139,10 +155,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "start_time": time.time(),
     })
 
+    # Prometheus: set active agent count and start memory sampler
+    ACTIVE_AGENTS.set(3)  # planner + data_architect + verifier
+    memory_task = asyncio.create_task(_memory_sampler())
+    record_memory_utilization()  # initial sample
+
     logger.info("Aura system initialized — all agents online")
     yield
 
     # Shutdown
+    memory_task.cancel()
+    ACTIVE_AGENTS.set(0)
     await data_architect.on_stop()
     await verifier.on_stop()
     await planner.on_stop()
@@ -215,33 +238,44 @@ async def submit_query(req: QueryRequest) -> QueryResponse:
 
     # RBAC check
     if not rbac.check_permission(req.role, "agents", "invoke:planner"):
+        REQUEST_TOTAL.labels(endpoint="/query", status="failure").inc()
         raise HTTPException(403, f"Role '{req.role}' cannot invoke planner")
 
     start = time.time()
 
-    # Run the planner agent
-    context = {**req.context, "role": req.role, "mode": req.mode}
-    trace = await planner.run(req.query, context)
+    try:
+        # Run the planner agent
+        context = {**req.context, "role": req.role, "mode": req.mode}
+        trace = await planner.run(req.query, context)
 
-    # Check for autonomous actions
-    actions_taken = []
-    if req.mode == "full":
-        action_records = await executor.monitor_and_act()
-        actions_taken = [r.to_dict() for r in action_records]
+        # Check for autonomous actions
+        actions_taken = []
+        if req.mode == "full":
+            action_records = await executor.monitor_and_act()
+            actions_taken = [r.to_dict() for r in action_records]
 
-    total_ms = (time.time() - start) * 1000
+        total_ms = (time.time() - start) * 1000
 
-    # Store trace
-    state["traces"][trace.trace_id] = trace.to_dict()
+        # Record Prometheus metrics
+        INFERENCE_LATENCY.labels(endpoint="/query").observe(total_ms / 1000.0)
+        REQUEST_TOTAL.labels(endpoint="/query", status="success").inc()
 
-    return QueryResponse(
-        trace_id=trace.trace_id,
-        status=trace.status,
-        output=trace.final_output,
-        agents_used=[trace.agent_name],
-        total_latency_ms=round(total_ms, 2),
-        actions_taken=actions_taken,
-    )
+        # Store trace
+        state["traces"][trace.trace_id] = trace.to_dict()
+
+        return QueryResponse(
+            trace_id=trace.trace_id,
+            status=trace.status,
+            output=trace.final_output,
+            agents_used=[trace.agent_name],
+            total_latency_ms=round(total_ms, 2),
+            actions_taken=actions_taken,
+        )
+    except HTTPException:
+        raise  # Already counted above for RBAC failures
+    except Exception:
+        REQUEST_TOTAL.labels(endpoint="/query", status="failure").inc()
+        raise
 
 
 @app.get("/traces/{trace_id}")

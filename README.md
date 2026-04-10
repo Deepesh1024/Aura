@@ -200,3 +200,96 @@ Evaluated against a golden dataset of 50 complex queries requiring fusion of str
 ### Production OLAP & PII Redaction
 - **DuckDB Engine**: Uses vectorized DuckDB over synthetic TPC-DS Parquet datasets simulating production disk layouts. Enforces strict 80% RAM limit mapping to analytical workload constraints.
 - **Privacy By Design**: `sqlglot` parses ASTs locally to autonomously detect PII columns and rewrite selections to masking functions/md5 hashes pre-execution, preventing any PII leaks to the data plane!
+
+## Infrastructure & Observability
+
+### Prometheus Metrics
+
+Aura exposes production-grade Prometheus metrics at the `/metrics` endpoint. All metrics follow the `aura_` namespace convention.
+
+| Metric | Type | Description |
+|---|---|---|
+| `aura_inference_latency_seconds` | Histogram | End-to-end query processing latency with p50/p99-friendly buckets |
+| `aura_memory_utilization_percent` | Gauge | Process RSS as a percentage of system RAM (sampled every 5s) |
+| `aura_active_agents` | Gauge | Number of currently active agent instances |
+| `aura_requests_total` | Counter | HTTP requests by endpoint and status (`success`/`failure`) |
+| `aura_agent_step_latency_ms` | Histogram | Per-step agent ReAct latency |
+| `aura_bus_messages_total` | Counter | Message bus throughput by topic |
+| `aura_llm_tokens_total` | Counter | LLM token consumption |
+| `aura_llm_latency_ms` | Histogram | LLM inference latency |
+| `aura_rag_retrieval_latency_ms` | Histogram | RAG pipeline latency |
+| `aura_verification_results_total` | Counter | Verification outcomes (PASS/FAIL/WARN) |
+| `aura_model_drift_score` | Gauge | Model drift detection (0–1) |
+
+Prometheus scrapes these metrics from `aura-api:8000/metrics` every 5 seconds (see `config/prometheus.yml`).
+
+### Grafana Dashboard
+
+A pre-built Grafana dashboard (`grafana/dashboard.json`) visualizes the four core production metrics:
+
+1. **Inference Latency (p50/p99)** — Time-series graph with smooth line interpolation
+2. **Memory Utilization** — Gauge panel with traffic-light thresholds (green/amber/red)
+3. **Active Agents** — Stat panel with background color coding
+4. **Request Rate (Success/Failure)** — Stacked bar chart showing throughput breakdown
+
+**Quick Start:**
+
+```bash
+# Launch the full observability stack
+docker-compose up -d prometheus grafana
+
+# Access Grafana (auto-provisioned with datasource + dashboard)
+open http://localhost:3000
+# Login: admin / aura
+```
+
+The dashboard is auto-provisioned via `grafana/provisioning/` — no manual setup required.
+
+### Terraform (AWS Infrastructure)
+
+The `terraform/` directory contains a production-ready AWS infrastructure configuration:
+
+| Resource | File | Description |
+|---|---|---|
+| EKS Cluster | `main.tf` | Managed Kubernetes cluster with configurable version |
+| Node Group | `main.tf` | Auto-scaling worker nodes (m5.xlarge default) |
+| S3 Bucket | `main.tf` | Versioned, KMS-encrypted data storage with lifecycle rules |
+| IAM Roles | `iam.tf` | Cluster role, node role, and IRSA for pod-level AWS access |
+| OIDC Provider | `iam.tf` | Enables IAM Roles for Service Accounts (IRSA) |
+| CloudWatch Logs | `cloudwatch.tf` | EKS control plane logs with 30-day retention |
+
+**Prerequisites:**
+- [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5.0
+- AWS CLI configured with appropriate credentials
+- Sufficient IAM permissions for EKS, S3, IAM, and CloudWatch
+
+**Deployment:**
+
+```bash
+cd terraform/
+
+# Initialize providers
+terraform init
+
+# Preview the infrastructure plan
+terraform plan -var="environment=dev" -var="aws_region=us-east-1"
+
+# Deploy
+terraform apply -var="environment=dev"
+
+# Get kubeconfig
+$(terraform output -raw kubeconfig_command)
+```
+
+**Customization** — Override defaults in `terraform/variables.tf`:
+
+```hcl
+# Example: production deployment with larger nodes
+terraform apply \
+  -var="environment=prod" \
+  -var="cluster_name=aura-prod" \
+  -var="node_instance_type=m5.2xlarge" \
+  -var="node_desired_count=5" \
+  -var="node_max_count=10"
+```
+

@@ -115,6 +115,8 @@ services:
       - prometheus
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning/:/etc/grafana/provisioning/:ro
+      - ./grafana/dashboard.json:/var/lib/grafana/dashboards/aura.json:ro
     networks:
       - aura-net
 

@@ -1,5 +1,11 @@
 """
 Telemetry — OpenTelemetry traces + Prometheus metrics for full observability.
+
+Exposes production-grade Prometheus metrics including:
+  - Inference latency (histogram with p50/p99 buckets)
+  - Memory utilization percentage (gauge)
+  - Active agent count (gauge)
+  - Request success/failure rate (counter)
 """
 
 from __future__ import annotations
@@ -10,6 +16,7 @@ from contextlib import asynccontextmanager
 from functools import wraps
 from typing import Any, AsyncIterator, Callable
 
+import psutil
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 logger = logging.getLogger(__name__)
@@ -79,6 +86,28 @@ RAG_RETRIEVAL_LATENCY = Histogram(
     "RAG retrieval pipeline latency",
     labelnames=["path"],  # structured | unstructured | hybrid
     buckets=[10, 25, 50, 100, 200, 500],
+)
+
+# ---------------------------------------------------------------------------
+# Production Metrics — Inference, Memory, Requests
+# ---------------------------------------------------------------------------
+
+INFERENCE_LATENCY = Histogram(
+    "aura_inference_latency_seconds",
+    "End-to-end inference latency for query processing (seconds)",
+    labelnames=["endpoint"],
+    buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+)
+
+MEMORY_UTILIZATION = Gauge(
+    "aura_memory_utilization_percent",
+    "Current memory utilization of the Aura process as a percentage of system RAM",
+)
+
+REQUEST_TOTAL = Counter(
+    "aura_requests_total",
+    "Total HTTP requests processed by the API",
+    labelnames=["endpoint", "status"],  # status: success | failure
 )
 
 
@@ -183,6 +212,26 @@ class DriftDetector:
     def reset_baseline(self) -> None:
         """Reset baseline to current recent window."""
         self._baseline_scores = list(self._recent_scores)
+
+
+# ---------------------------------------------------------------------------
+# Memory Utilization Sampling
+# ---------------------------------------------------------------------------
+
+def record_memory_utilization() -> float:
+    """
+    Sample the current Aura process RSS as a percentage of total system RAM
+    and update the MEMORY_UTILIZATION gauge.
+
+    Returns:
+        The memory utilization percentage (0.0–100.0).
+    """
+    process = psutil.Process()
+    mem_info = process.memory_info()
+    total_mem = psutil.virtual_memory().total
+    utilization = (mem_info.rss / total_mem) * 100.0 if total_mem > 0 else 0.0
+    MEMORY_UTILIZATION.set(round(utilization, 2))
+    return utilization
 
 
 # ---------------------------------------------------------------------------

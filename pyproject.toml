@@ -31,6 +31,7 @@ dependencies = [
     "numpy>=1.26.0",
     "duckdb",
     "sqlglot",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]
